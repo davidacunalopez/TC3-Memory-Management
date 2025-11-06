@@ -1,0 +1,18 @@
+# Archivos compilados
+*.exe
+*.o
+*.out
+memory_manager
+memory_manager.exe
+
+# Archivos de editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
