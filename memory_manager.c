@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <stdbool.h>
 
 #define MAX_VARIABLES 100
@@ -196,6 +197,12 @@ bool alloc_memory(MemoryManager* mm, const char* var_name, size_t size) {
         fprintf(stderr, "Error: La variable '%s' ya existe\n", var_name);
         return false;
     }
+
+    // Validar capacidad de la tabla de variables ANTES de modificar bloques
+    if (mm->variable_count >= MAX_VARIABLES) {
+            fprintf(stderr, "Error: Se alcanzó el límite de variables\n");
+            return false;
+        }
     
     // Seleccionar bloque según el algoritmo
     MemoryBlock* block = select_block(mm, size);
@@ -211,12 +218,7 @@ bool alloc_memory(MemoryManager* mm, const char* var_name, size_t size) {
     // Dividir el bloque si es necesario
     split_block(block, size);
     
-    // Agregar a la tabla de variables
-    if (mm->variable_count >= MAX_VARIABLES) {
-        fprintf(stderr, "Error: Se alcanzó el límite de variables\n");
-        return false;
-    }
-    
+    // Agregar a la tabla de variables (ya validado el límite)
     Variable* var = &mm->variables[mm->variable_count];
     strcpy(var->name, var_name);
     var->address = block->address;
@@ -276,6 +278,18 @@ bool realloc_memory(MemoryManager* mm, const char* var_name, size_t new_size) {
             merge_free_blocks(mm);
         }
         var->size = new_size;
+       // --- NUEVO: Rellenar TODO el bloque resultante con el nombre de la variable ---
+        // La consigna exige que en REALLOC se rellene toda la memoria con el nombre.
+        // Aunque la región "cabeza" ya estaba llena, lo garantizamos explícitamente.
+        size_t name_len = strlen(var_name);
+        if (name_len > 0) {
+            for (size_t i = 0; i < new_size; i++) {
+                ((char*)block->address)[i] = var_name[i % name_len];
+            }
+        } else {
+            memset(block->address, 0, new_size);
+        }
+
         printf("REALLOC: Variable '%s' redimensionada de %zu a %zu bytes\n", var_name, old_size, new_size);
         return true;
     } else {
@@ -465,6 +479,22 @@ void print_memory_state(MemoryManager* mm) {
     printf("===========================\n\n");
 }
 
+// --- NUEVO: Reporte simple de fugas (variables aún activas) ---
+void report_leaks(MemoryManager* mm) {
+        int leaks = 0;
+        for (int i = 0; i < mm->variable_count; i++) {
+            printf("[LEAK] %s: %zu bytes en %p\n",
+                   mm->variables[i].name,
+                   mm->variables[i].size,
+                   mm->variables[i].address);
+            leaks++;
+        }
+        if (leaks == 0) {
+            printf("No se detectaron fugas de memoria.\n");
+        }
+    }
+    
+
 // Función para procesar una línea del archivo
 bool process_line(MemoryManager* mm, char* line) {
     // Eliminar salto de línea
@@ -479,31 +509,42 @@ bool process_line(MemoryManager* mm, char* line) {
     while (*line == ' ' || *line == '\t') {
         line++;
     }
+    // Trim left (espacios/tabs)
+    char* p = line;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+
+    // Ignorar líneas vacías y comentarios (incluye comentarios con espacios iniciales)
+    if (*p == '\0' || *p == '#') {
+        return true;
+    }
+
     
     char command[20];
     char var_name[MAX_NAME_LENGTH];
     size_t size;
     
-    if (sscanf(line, "%s", command) != 1) {
+    if (sscanf(p, "%s", command) != 1) {
         return true;
     }
     
     if (strcmp(command, "ALLOC") == 0) {
-        if (sscanf(line, "%s %s %zu", command, var_name, &size) == 3) {
+        if (sscanf(p, "%s %s %zu", command, var_name, &size) == 3) {
             return alloc_memory(mm, var_name, size);
         } else {
             fprintf(stderr, "Error: Formato incorrecto para ALLOC\n");
             return false;
         }
     } else if (strcmp(command, "REALLOC") == 0) {
-        if (sscanf(line, "%s %s %zu", command, var_name, &size) == 3) {
+        if (sscanf(p, "%s %s %zu", command, var_name, &size) == 3) {
             return realloc_memory(mm, var_name, size);
         } else {
             fprintf(stderr, "Error: Formato incorrecto para REALLOC\n");
             return false;
         }
     } else if (strcmp(command, "FREE") == 0) {
-        if (sscanf(line, "%s %s", command, var_name) == 2) {
+        if (sscanf(p, "%s %s", command, var_name) == 2) {
             return free_memory(mm, var_name);
         } else {
             fprintf(stderr, "Error: Formato incorrecto para FREE\n");
@@ -564,6 +605,10 @@ int main(int argc, char* argv[]) {
     }
     
     fclose(file);
+
+// --- NUEVO: reporte de fugas antes de destruir el gestor ---
+    report_leaks(mm);
+
     destroy_memory_manager(mm);
     
     return 0;
