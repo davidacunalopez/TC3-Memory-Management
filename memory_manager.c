@@ -4,37 +4,67 @@
 #include <ctype.h>
 #include <stdbool.h>
 
-#define MAX_VARIABLES 100
-#define MAX_NAME_LENGTH 50
-#define MEMORY_SIZE 10000  // Tamaño del bloque de memoria principal
+// Constantes de configuración del gestor de memoria
+#define MAX_VARIABLES 100          // Número máximo de variables que se pueden gestionar
+#define MAX_NAME_LENGTH 50         // Longitud máxima del nombre de una variable
+#define MEMORY_SIZE 10000          // Tamaño del bloque de memoria principal en bytes
 
-// Estructura para representar un bloque de memoria asignado
+/**
+ * Estructura que representa un bloque de memoria en el pool.
+ * 
+ * Cada bloque puede estar libre u ocupado por una variable. Los bloques forman
+ * una lista enlazada que representa la fragmentación de la memoria. Cuando un
+ * bloque está libre, puede ser asignado a una nueva variable usando uno de los
+ * algoritmos de asignación (First-fit, Best-fit, Worst-fit).
+ */
 typedef struct MemoryBlock {
-    char variable_name[MAX_NAME_LENGTH];
-    void* address;
-    size_t size;
-    bool is_free;
-    struct MemoryBlock* next;
+    char variable_name[MAX_NAME_LENGTH];  // Nombre de la variable que ocupa el bloque (vacío si está libre)
+    void* address;                        // Dirección de inicio del bloque en el pool
+    size_t size;                          // Tamaño del bloque en bytes
+    bool is_free;                         // Indica si el bloque está libre (true) u ocupado (false)
+    struct MemoryBlock* next;             // Puntero al siguiente bloque en la lista enlazada
 } MemoryBlock;
 
-// Estructura para gestionar las variables
+/**
+ * Estructura que representa una variable gestionada por el sistema.
+ * 
+ * Mantiene la información de cada variable activa: su nombre, la dirección
+ * donde está almacenada en el pool de memoria, y su tamaño. Esta estructura
+ * permite buscar variables rápidamente por nombre.
+ */
 typedef struct Variable {
-    char name[MAX_NAME_LENGTH];
-    void* address;
-    size_t size;
+    char name[MAX_NAME_LENGTH];    // Nombre único de la variable
+    void* address;                 // Dirección de la variable en el pool de memoria
+    size_t size;                   // Tamaño de la variable en bytes
 } Variable;
 
-// Estructura principal del gestor de memoria
+/**
+ * Estructura principal del gestor de memoria.
+ * 
+ * Contiene todo el estado del sistema de gestión de memoria: el pool de memoria
+ * simulado, la lista de bloques (libres y ocupados), la tabla de variables
+ * activas, y el algoritmo de asignación configurado.
+ */
 typedef struct MemoryManager {
-    void* memory_pool;           // Bloque grande de memoria solicitado al SO
-    size_t pool_size;             // Tamaño del bloque
-    MemoryBlock* blocks;          // Lista de bloques asignados
-    Variable* variables;          // Tabla de variables
-    int variable_count;           // Número de variables activas
-    int allocation_algorithm;     // 0: First-fit, 1: Best-fit, 2: Worst-fit
+    void* memory_pool;           // Bloque grande de memoria solicitado al sistema operativo
+    size_t pool_size;             // Tamaño total del pool de memoria en bytes
+    MemoryBlock* blocks;          // Lista enlazada de bloques (libres y ocupados)
+    Variable* variables;          // Tabla de variables activas
+    int variable_count;           // Número de variables actualmente activas
+    int allocation_algorithm;     // Algoritmo de asignación: 0=First-fit, 1=Best-fit, 2=Worst-fit
 } MemoryManager;
 
-// Funciones de inicialización
+/**
+ * Inicializa un nuevo gestor de memoria con el tamaño y algoritmo especificados.
+ * 
+ * Reserva memoria para la estructura del gestor, crea el pool de memoria del
+ * tamaño solicitado, inicializa la tabla de variables, y crea el bloque libre
+ * inicial que ocupa todo el pool. Configura el algoritmo de asignación a usar.
+ * 
+ * @param pool_size Tamaño en bytes del pool de memoria a crear
+ * @param algorithm Algoritmo de asignación: 0=First-fit, 1=Best-fit, 2=Worst-fit
+ * @return Puntero al gestor de memoria inicializado, o NULL si hubo error
+ */
 MemoryManager* init_memory_manager(size_t pool_size, int algorithm) {
     MemoryManager* mm = (MemoryManager*)malloc(sizeof(MemoryManager));
     if (!mm) {
@@ -67,6 +97,15 @@ MemoryManager* init_memory_manager(size_t pool_size, int algorithm) {
     return mm;
 }
 
+/**
+ * Libera todos los recursos asociados al gestor de memoria.
+ * 
+ * Recorre la lista de bloques liberando cada nodo, libera el pool de memoria,
+ * la tabla de variables, y finalmente la estructura del gestor. Esta función
+ * debe llamarse al finalizar el uso del gestor para evitar fugas de memoria.
+ * 
+ * @param mm Puntero al gestor de memoria a destruir (puede ser NULL)
+ */
 void destroy_memory_manager(MemoryManager* mm) {
     if (!mm) return;
     
@@ -83,7 +122,17 @@ void destroy_memory_manager(MemoryManager* mm) {
     free(mm);
 }
 
-// Función para encontrar una variable
+/**
+ * Busca una variable en la tabla de variables por su nombre.
+ * 
+ * Recorre la tabla de variables activas buscando una cuyo nombre coincida
+ * exactamente con el proporcionado. La búsqueda es case-sensitive y requiere
+ * coincidencia exacta.
+ * 
+ * @param mm Puntero al gestor de memoria
+ * @param name Nombre de la variable a buscar
+ * @return Puntero a la estructura Variable si se encuentra, NULL si no existe
+ */
 Variable* find_variable(MemoryManager* mm, const char* name) {
     for (int i = 0; i < mm->variable_count; i++) {
         if (strcmp(mm->variables[i].name, name) == 0) {
@@ -93,7 +142,17 @@ Variable* find_variable(MemoryManager* mm, const char* name) {
     return NULL;
 }
 
-// Función para encontrar un bloque libre que pueda satisfacer el tamaño requerido
+/**
+ * Encuentra el primer bloque libre que tenga suficiente espacio.
+ * 
+ * Recorre la lista enlazada de bloques buscando el primer bloque que esté libre
+ * y tenga un tamaño mayor o igual al solicitado. Esta es la base para el
+ * algoritmo First-fit.
+ * 
+ * @param mm Puntero al gestor de memoria
+ * @param size Tamaño mínimo requerido en bytes
+ * @return Puntero al primer bloque libre que cumple, NULL si no hay ninguno
+ */
 MemoryBlock* find_free_block(MemoryManager* mm, size_t size) {
     MemoryBlock* current = mm->blocks;
     while (current) {
@@ -105,12 +164,32 @@ MemoryBlock* find_free_block(MemoryManager* mm, size_t size) {
     return NULL;
 }
 
-// Algoritmo First-fit: encuentra el primer bloque libre que pueda satisfacer la solicitud
+/**
+ * Algoritmo First-fit: encuentra el primer bloque libre que pueda satisfacer la solicitud.
+ * 
+ * Busca secuencialmente en la lista de bloques y selecciona el primer bloque
+ * libre que tenga suficiente espacio. Es rápido pero puede generar más
+ * fragmentación que otros algoritmos.
+ * 
+ * @param mm Puntero al gestor de memoria
+ * @param size Tamaño requerido en bytes
+ * @return Puntero al bloque seleccionado, NULL si no hay espacio suficiente
+ */
 MemoryBlock* first_fit(MemoryManager* mm, size_t size) {
     return find_free_block(mm, size);
 }
 
-// Algoritmo Best-fit: encuentra el bloque libre más pequeño que pueda satisfacer la solicitud
+/**
+ * Algoritmo Best-fit: encuentra el bloque libre más pequeño que pueda satisfacer la solicitud.
+ * 
+ * Recorre todos los bloques libres y selecciona el que tenga el tamaño más
+ * cercano (pero mayor o igual) al solicitado. Minimiza el desperdicio de
+ * memoria pero requiere recorrer toda la lista, siendo más lento.
+ * 
+ * @param mm Puntero al gestor de memoria
+ * @param size Tamaño requerido en bytes
+ * @return Puntero al bloque seleccionado, NULL si no hay espacio suficiente
+ */
 MemoryBlock* best_fit(MemoryManager* mm, size_t size) {
     MemoryBlock* best = NULL;
     MemoryBlock* current = mm->blocks;
@@ -127,7 +206,17 @@ MemoryBlock* best_fit(MemoryManager* mm, size_t size) {
     return best;
 }
 
-// Algoritmo Worst-fit: encuentra el bloque libre más grande
+/**
+ * Algoritmo Worst-fit: encuentra el bloque libre más grande disponible.
+ * 
+ * Recorre todos los bloques libres y selecciona el de mayor tamaño que pueda
+ * satisfacer la solicitud. Deja bloques grandes libres que pueden ser útiles
+ * para futuras asignaciones grandes, pero puede generar más fragmentación.
+ * 
+ * @param mm Puntero al gestor de memoria
+ * @param size Tamaño requerido en bytes
+ * @return Puntero al bloque seleccionado, NULL si no hay espacio suficiente
+ */
 MemoryBlock* worst_fit(MemoryManager* mm, size_t size) {
     MemoryBlock* worst = NULL;
     MemoryBlock* current = mm->blocks;
@@ -144,7 +233,17 @@ MemoryBlock* worst_fit(MemoryManager* mm, size_t size) {
     return worst;
 }
 
-// Función para seleccionar el algoritmo según la configuración
+/**
+ * Selecciona un bloque libre usando el algoritmo configurado en el gestor.
+ * 
+ * Llama al algoritmo de asignación correspondiente según el valor de
+ * allocation_algorithm en el gestor. Si el valor no es válido, usa First-fit
+ * por defecto.
+ * 
+ * @param mm Puntero al gestor de memoria
+ * @param size Tamaño requerido en bytes
+ * @return Puntero al bloque seleccionado, NULL si no hay espacio suficiente
+ */
 MemoryBlock* select_block(MemoryManager* mm, size_t size) {
     switch (mm->allocation_algorithm) {
         case 0: return first_fit(mm, size);
@@ -154,7 +253,16 @@ MemoryBlock* select_block(MemoryManager* mm, size_t size) {
     }
 }
 
-// Función para dividir un bloque si es necesario
+/**
+ * Divide un bloque si es más grande que el tamaño necesario.
+ * 
+ * Si el bloque tiene más espacio del requerido, crea un nuevo bloque libre
+ * con el espacio sobrante y lo inserta después del bloque actual en la lista.
+ * Esto permite reutilizar el espacio sobrante en futuras asignaciones.
+ * 
+ * @param block Puntero al bloque a dividir
+ * @param size Tamaño que se necesita del bloque (el resto se convierte en bloque libre)
+ */
 void split_block(MemoryBlock* block, size_t size) {
     if (block->size > size) {
         MemoryBlock* new_block = (MemoryBlock*)malloc(sizeof(MemoryBlock));
@@ -168,7 +276,16 @@ void split_block(MemoryBlock* block, size_t size) {
     }
 }
 
-// Función para fusionar bloques libres adyacentes
+/**
+ * Fusiona bloques libres que sean adyacentes en memoria.
+ * 
+ * Recorre la lista de bloques y cuando encuentra dos bloques libres consecutivos
+ * que son adyacentes en memoria (el final de uno coincide con el inicio del otro),
+ * los fusiona en un solo bloque libre más grande. Esto reduce la fragmentación
+ * y facilita futuras asignaciones grandes.
+ * 
+ * @param mm Puntero al gestor de memoria
+ */
 void merge_free_blocks(MemoryManager* mm) {
     MemoryBlock* current = mm->blocks;
     while (current && current->next) {
@@ -190,7 +307,20 @@ void merge_free_blocks(MemoryManager* mm) {
     }
 }
 
-// Función ALLOC
+/**
+ * Asigna memoria para una nueva variable.
+ * 
+ * Valida que la variable no exista, que no se haya alcanzado el límite de
+ * variables, y que haya suficiente memoria disponible. Usa el algoritmo
+ * configurado para seleccionar un bloque libre, lo divide si es necesario,
+ * y llena la memoria asignada con el nombre de la variable repetido. Registra
+ * la variable en la tabla de variables.
+ * 
+ * @param mm Puntero al gestor de memoria
+ * @param var_name Nombre único de la variable a crear
+ * @param size Tamaño en bytes a asignar
+ * @return true si la asignación fue exitosa, false en caso de error
+ */
 bool alloc_memory(MemoryManager* mm, const char* var_name, size_t size) {
     // Verificar si la variable ya existe
     if (find_variable(mm, var_name)) {
@@ -239,7 +369,20 @@ bool alloc_memory(MemoryManager* mm, const char* var_name, size_t size) {
     return true;
 }
 
-// Función REALLOC
+/**
+ * Redimensiona una variable existente.
+ * 
+ * Si el nuevo tamaño es menor, reduce el bloque y crea un bloque libre con
+ * el espacio sobrante. Si es mayor, intenta expandir el bloque en el lugar si
+ * hay un bloque libre adyacente. Si no es posible expandir en el lugar,
+ * busca un nuevo bloque más grande, copia los datos, y libera el bloque anterior.
+ * En todos los casos, rellena la memoria con el nombre de la variable.
+ * 
+ * @param mm Puntero al gestor de memoria
+ * @param var_name Nombre de la variable a redimensionar
+ * @param new_size Nuevo tamaño en bytes
+ * @return true si el redimensionamiento fue exitoso, false en caso de error
+ */
 bool realloc_memory(MemoryManager* mm, const char* var_name, size_t new_size) {
     Variable* var = find_variable(mm, var_name);
     if (!var) {
@@ -383,7 +526,17 @@ bool realloc_memory(MemoryManager* mm, const char* var_name, size_t new_size) {
     }
 }
 
-// Función FREE
+/**
+ * Libera la memoria asignada a una variable.
+ * 
+ * Busca la variable por nombre, marca su bloque como libre, fusiona bloques
+ * libres adyacentes para reducir fragmentación, y elimina la variable de
+ * la tabla reorganizando las entradas para mantener la tabla compacta.
+ * 
+ * @param mm Puntero al gestor de memoria
+ * @param var_name Nombre de la variable a liberar
+ * @return true si la liberación fue exitosa, false si la variable no existe
+ */
 bool free_memory(MemoryManager* mm, const char* var_name) {
     Variable* var = find_variable(mm, var_name);
     if (!var) {
@@ -428,7 +581,16 @@ bool free_memory(MemoryManager* mm, const char* var_name) {
     return true;
 }
 
-// Función PRINT
+/**
+ * Imprime el estado completo del gestor de memoria.
+ * 
+ * Muestra información detallada sobre todas las variables activas, todos los
+ * bloques (libres y ocupados) con sus direcciones y tamaños, y estadísticas
+ * generales como memoria total, libre, usada y nivel de fragmentación.
+ * Útil para depuración y monitoreo del estado del sistema.
+ * 
+ * @param mm Puntero al gestor de memoria
+ */
 void print_memory_state(MemoryManager* mm) {
     printf("\n=== Estado de la Memoria ===\n");
     printf("Variables activas: %d\n", mm->variable_count);
@@ -479,7 +641,15 @@ void print_memory_state(MemoryManager* mm) {
     printf("===========================\n\n");
 }
 
-// --- NUEVO: Reporte simple de fugas (variables aún activas) ---
+/**
+ * Reporta variables que aún están activas al finalizar el programa.
+ * 
+ * Recorre la tabla de variables y muestra todas las que aún están asignadas.
+ * Si no hay variables activas, indica que no se detectaron fugas. Esta función
+ * ayuda a identificar variables que no fueron liberadas antes de terminar.
+ * 
+ * @param mm Puntero al gestor de memoria
+ */
 void report_leaks(MemoryManager* mm) {
         int leaks = 0;
         for (int i = 0; i < mm->variable_count; i++) {
@@ -495,7 +665,18 @@ void report_leaks(MemoryManager* mm) {
     }
     
 
-// Función para procesar una línea del archivo
+/**
+ * Procesa una línea de comando del archivo de entrada.
+ * 
+ * Parsea la línea, identifica el comando (ALLOC, REALLOC, FREE, PRINT),
+ * extrae los parámetros necesarios y ejecuta la operación correspondiente.
+ * Ignora líneas vacías y comentarios (que comienzan con #). Valida el formato
+ * de cada comando antes de ejecutarlo.
+ * 
+ * @param mm Puntero al gestor de memoria
+ * @param line Línea de texto con el comando a procesar (se modifica durante el parsing)
+ * @return true si el comando se procesó exitosamente, false si hubo un error
+ */
 bool process_line(MemoryManager* mm, char* line) {
     // Eliminar salto de línea
     line[strcspn(line, "\r\n")] = 0;
@@ -559,7 +740,21 @@ bool process_line(MemoryManager* mm, char* line) {
     }
 }
 
-// Función principal
+/**
+ * Función principal del programa gestor de memoria.
+ * 
+ * Inicializa el gestor de memoria con el algoritmo especificado, lee comandos
+ * desde un archivo de entrada línea por línea, los procesa, y al finalizar
+ * reporta posibles fugas de memoria antes de liberar todos los recursos.
+ * 
+ * Uso: memory_manager <archivo_entrada> [algoritmo]
+ *   - archivo_entrada: archivo con los comandos a ejecutar (obligatorio)
+ *   - algoritmo: 0=First-fit, 1=Best-fit, 2=Worst-fit (opcional, por defecto First-fit)
+ * 
+ * @param argc Número de argumentos de la línea de comandos
+ * @param argv Arreglo de argumentos (argv[0] es el nombre del programa)
+ * @return 0 si todo fue correcto, 1 en caso de error
+ */
 int main(int argc, char* argv[]) {
     if (argc < 2 || argc > 3) {
         fprintf(stderr, "Uso: %s <archivo_entrada> [algoritmo]\n", argv[0]);
